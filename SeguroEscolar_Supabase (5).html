@@ -1,0 +1,784 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Seguro Escolar · IES Gregorio Prieto</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <style>
+    body { background:#f3f4f6; font-size:0.88rem; }
+    .navbar { background:#1f2937 !important; }
+    .navbar-brand { color:white !important; font-weight:700; font-size:0.95rem; }
+    #alerta-global { position:fixed; top:66px; right:16px; z-index:9999; min-width:320px; display:none; }
+    .lista-scroll { max-height:calc(100vh - 175px); overflow-y:auto; }
+    .list-group-item { padding:0.35rem 0.6rem; }
+    .stat { color:white; font-size:0.8rem; }
+    .stat strong { font-size:1rem; }
+  </style>
+</head>
+<body>
+
+<nav class="navbar navbar-dark px-3 py-2 mb-2">
+  <span class="navbar-brand"><i class="bi bi-lock"></i> Seguro Escolar · IES Gregorio Prieto</span>
+  <div class="d-flex gap-3">
+    <span class="stat">Total: <strong id="nav-total">—</strong></span>
+    <span class="stat" style="color:#6ee7b7;">Pagados: <strong id="nav-pagados">—</strong></span>
+    <span class="stat" style="color:#fcd34d;">Pend: <strong id="nav-pendientes">—</strong></span>
+    <span class="stat" style="color:#93c5fd;">Cobrado: <strong id="nav-importe">—</strong></span>
+  </div>
+</nav>
+
+<div id="alerta-global" class="alert alert-dismissible shadow" role="alert">
+  <span id="alerta-texto"></span>
+  <button type="button" class="btn-close" onclick="cerrarAlerta()"></button>
+</div>
+
+<div class="container-fluid px-2">
+  <div class="card border-0 shadow-sm mb-2">
+    <div class="card-body py-2">
+      <div class="row g-2 align-items-end">
+        <div class="col-auto">
+          <label class="form-label small mb-0">Grupo</label>
+          <select class="form-select form-select-sm" id="seg-f-grupo" onchange="cargarAlumnos()" style="min-width:120px;">
+            <option value="TODOS">Todos</option>
+          </select>
+        </div>
+        <div class="col-auto">
+          <label class="form-label small mb-0">Estado</label>
+          <select class="form-select form-select-sm" id="seg-f-estado" onchange="cargarAlumnos()">
+            <option value="todos">Todos</option>
+            <option value="pendientes">Pendientes</option>
+            <option value="pagados">Pagados</option>
+          </select>
+        </div>
+        <div class="col">
+          <label class="form-label small mb-0">Buscar alumno</label>
+          <input type="text" class="form-control form-control-sm" id="seg-buscar"
+            placeholder="Nombre o apellido..." oninput="filtrarAlumnos()">
+        </div>
+        <div class="col-auto"><div style="border-left:2px solid #e5e7eb;height:32px;"></div></div>
+        <div class="col-auto">
+          <label class="form-label small mb-0 text-muted">Cargar datos</label>
+          <div class="d-flex gap-1">
+            <input type="file" id="seg-csv" accept=".csv" style="display:none" onchange="importarCSV(this)">
+            <button class="btn btn-outline-primary btn-sm" onclick="document.getElementById('seg-csv').click()">
+              <i class="bi bi-people"></i> Matrículas
+            </button>
+            <input type="file" id="seg-fam" accept=".xlsx" style="display:none" onchange="importarFamilias(this)">
+            <button class="btn btn-outline-info btn-sm" onclick="document.getElementById('seg-fam').click()">
+              <i class="bi bi-people-fill"></i> Familias
+            </button>
+            <input type="file" id="seg-banco" accept=".xlsx" style="display:none" onchange="abrirModalBanco(this)">
+            <button class="btn btn-success btn-sm" onclick="document.getElementById('seg-banco').click()">
+              <i class="bi bi-bank"></i> Banco
+            </button>
+          </div>
+        </div>
+        <div class="col-auto"><div style="border-left:2px solid #e5e7eb;height:32px;"></div></div>
+        <div class="col-auto">
+          <label class="form-label small mb-0 text-muted">Exportar</label>
+          <button class="btn btn-outline-secondary btn-sm" onclick="exportarExcel()">
+            <i class="bi bi-file-earmark-excel"></i> Excel grupos
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="row g-2">
+    <div class="col-12 col-lg-7">
+      <div class="lista-scroll border-end" id="seg-lista">
+        <div class="text-center text-muted py-5">
+          <i class="bi bi-lock fs-1"></i>
+          <p class="mt-2">Pulsa <strong>Matrículas</strong> para empezar</p>
+        </div>
+      </div>
+    </div>
+    <div class="col-12 col-lg-5">
+      <div class="d-flex justify-content-between align-items-center mb-1 px-1">
+        <div class="d-flex gap-2 small flex-wrap">
+          <span><i class="bi bi-exclamation-triangle text-warning"></i> <strong>Incidencias</strong></span>
+          <span class="text-muted">Total: <strong id="inc-total">—</strong></span>
+          <span class="text-warning">Pend: <strong id="inc-pendientes">—</strong></span>
+          <span class="text-success">Ok: <strong id="inc-resueltas">—</strong></span>
+          <span id="inc-por-mes"></span>
+        </div>
+        <div class="d-flex gap-1">
+          <button class="btn btn-sm btn-outline-secondary py-0 px-1" onclick="cargarIncidencias()"><i class="bi bi-arrow-repeat"></i></button>
+          <button class="btn btn-sm btn-outline-warning py-0 px-1" onclick="limpiarRevisados()"><i class="bi bi-arrow-counterclockwise"></i></button>
+        </div>
+      </div>
+      <div class="lista-scroll" id="inc-lista">
+        <div class="text-center text-muted py-4"><div class="spinner-border spinner-border-sm"></div></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL BANCO -->
+<div class="modal fade" id="modalBanco" tabindex="-1">
+  <div class="modal-dialog modal-sm">
+    <div class="modal-content">
+      <div class="modal-header" style="background:#059669;color:white;">
+        <h6 class="modal-title"><i class="bi bi-bank"></i> Pagos del banco</h6>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <p class="small text-muted mb-2">¿A qué mes corresponde este Excel?</p>
+        <select class="form-select" id="banco-mes">
+          <option value="">— Selecciona mes —</option>
+          <option>Septiembre</option><option>Octubre</option><option>Noviembre</option>
+          <option>Diciembre</option><option>Enero</option><option>Febrero</option>
+          <option>Marzo</option><option>Abril</option><option>Mayo</option>
+          <option>Junio</option><option>Julio</option><option>Agosto</option>
+        </select>
+        <p class="small text-muted mt-2 mb-0" id="banco-preview"></p>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cancelar</button>
+        <button class="btn btn-success btn-sm" onclick="confirmarBanco()">Procesar pagos</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+
+const SUPA_URL = 'https://jqhmzzwgcizsxtlxcbei.supabase.co';
+const SUPA_KEY = 'sb_publishable_jl72VdDFtd1tizQhPGQOVA_N85DKSSu';
+const { createClient } = supabase;
+const db = createClient(SUPA_URL, SUPA_KEY);
+
+var _alumnos    = [];
+var _bancoPagos = [];
+
+window.onload = function() { cargarAlumnos(); cargarIncidencias(); };
+
+// ── NORMALIZAR: sin tildes, sin comas, sin puntos, mayúsculas ─
+function norm(t) {
+  if (!t) return '';
+  return t.toString().trim().toUpperCase()
+    .replace(/[ÁÀÄÂ]/g,'A').replace(/[ÉÈËÊ]/g,'E').replace(/[ÍÌÏÎ]/g,'I')
+    .replace(/[ÓÒÖÔ]/g,'O').replace(/[ÚÙÜÛ]/g,'U')
+    .replace(/Ñ/g,'N').replace(/Ç/g,'C')
+    .replace(/[^A-Z0-9 ]/g,'')
+    .replace(/\s+/g,' ').trim();
+}
+
+// Extraer palabras significativas (>2 letras)
+function palabras(t) {
+  return norm(t).split(' ').filter(function(p){ return p.length > 2; });
+}
+
+// ── CRUCE INTELIGENTE POR APELLIDOS ──────────────────────
+// Alumno: "Abad De La Torre, Sergio" → ap1="ABAD" ap2="DE LA TORRE"
+// Banco:  "DAVID ABAD ORTIZ" → contiene ABAD → match con ap1
+function extraerApellidos(nombreAlumno) {
+  // Formato: "Apellido1 Apellido2, Nombre" o "Apellido1, Nombre"
+  var n = norm(nombreAlumno);
+  var partes = n.split(' ');
+  // El apellido1 es la primera palabra, apellido2 podría ser varias palabras
+  // hasta la coma (que ya quitamos con norm). 
+  // Usamos la estructura del CSV: apellidos vienen antes del nombre
+  // En Supabase está guardado como "Apellidos, Nombre" sin coma tras norm
+  // Así que simplemente cogemos las primeras 1-3 palabras
+  return partes.slice(0, Math.min(3, partes.length));
+}
+
+// Comprueba si el ordenante del banco contiene algún apellido del alumno
+function matchPorApellidos(ordenante, nombreAlumno) {
+  var palOrdenante = palabras(ordenante);
+  var apAlumno     = extraerApellidos(nombreAlumno);
+  // Al menos 2 palabras del apellido deben coincidir, o la primera
+  var coincidencias = apAlumno.filter(function(ap){
+    return palOrdenante.indexOf(ap) !== -1;
+  });
+  return coincidencias.length >= 1 && apAlumno.length > 0 && apAlumno[0] === coincidencias[0];
+}
+
+// ── ALUMNOS ───────────────────────────────────────────────
+async function cargarAlumnos() {
+  var grupo  = document.getElementById('seg-f-grupo').value;
+  var estado = document.getElementById('seg-f-estado').value;
+  document.getElementById('seg-lista').innerHTML =
+    '<div class="text-center py-4"><div class="spinner-border spinner-border-sm text-primary"></div></div>';
+
+  var q = db.from('alumnos').select('*').order('nombre');
+  if (grupo !== 'TODOS') q = q.eq('grupo', grupo);
+  if (estado === 'pagados')    q = q.eq('pagado', true);
+  if (estado === 'pendientes') q = q.eq('pagado', false);
+  var { data, error } = await q;
+  if (error) { mostrarError(error.message); return; }
+
+  var { data: todos } = await db.from('alumnos').select('pagado').limit(2000);
+  var total   = todos ? todos.length : 0;
+  var pagados = todos ? todos.filter(function(a){ return a.pagado; }).length : 0;
+  document.getElementById('nav-total').textContent      = total;
+  document.getElementById('nav-pagados').textContent    = pagados;
+  document.getElementById('nav-pendientes').textContent = total - pagados;
+  document.getElementById('nav-importe').textContent    = (pagados * 1.12).toFixed(2) + ' €';
+
+  var selG = document.getElementById('seg-f-grupo');
+  if (selG.options.length === 1 && total > 0) {
+    var { data: gs } = await db.from('alumnos').select('grupo').order('grupo');
+    var gruposSet = {};
+    if (gs) gs.forEach(function(a){ if(a.grupo) gruposSet[a.grupo]=true; });
+    Object.keys(gruposSet).sort().forEach(function(g){
+      var o = document.createElement('option'); o.value=g; o.textContent=g; selG.appendChild(o);
+    });
+  }
+
+  _alumnos = data || [];
+  filtrarAlumnos();
+}
+
+function filtrarAlumnos() {
+  var buscar = (document.getElementById('seg-buscar').value||'').toLowerCase();
+  var lista  = buscar ? _alumnos.filter(function(a){ return a.nombre.toLowerCase().indexOf(buscar)!==-1; }) : _alumnos;
+  renderAlumnos(lista);
+}
+
+function renderAlumnos(alumnos) {
+  var cont = document.getElementById('seg-lista');
+  if (!alumnos||alumnos.length===0) {
+    cont.innerHTML='<div class="text-center text-muted py-4"><i class="bi bi-check-circle fs-1 text-success"></i><p>Sin resultados</p></div>';
+    return;
+  }
+  var html='<div class="list-group list-group-flush">';
+  alumnos.forEach(function(a) {
+    var badge = a.pagado
+      ? '<span class="badge" style="background:#d1fae5;color:#065f46;font-size:0.68rem;">✓ '+a.mes_pago+' · '+a.fecha_pago+'</span>'
+      : '<span class="badge" style="background:#fef3c7;color:#92400e;font-size:0.68rem;">⏳ Pendiente</span>';
+    var btn = !a.pagado
+      ? '<button class="btn btn-sm btn-success py-0 px-2" onclick="marcar('+a.id+')"><i class="bi bi-check-lg"></i></button>'
+      : '<button class="btn btn-sm btn-outline-danger py-0 px-2" onclick="desmarcar('+a.id+')"><i class="bi bi-x"></i></button>';
+    html+=
+      '<div class="list-group-item d-flex justify-content-between align-items-center">'+
+        '<div>'+
+          '<div class="fw-semibold" style="font-size:0.82rem;">'+a.nombre+'</div>'+
+          '<div class="text-muted" style="font-size:0.68rem;">'+a.grupo+'</div>'+
+          badge+
+        '</div>'+
+        '<div>'+btn+'</div>'+
+      '</div>';
+  });
+  html+='</div>';
+  cont.innerHTML=html;
+}
+
+async function marcar(id) {
+  var ahora=new Date();
+  var meses=['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+  await db.from('alumnos').update({pagado:true,fecha_pago:ahora.toLocaleDateString('es-ES'),mes_pago:meses[ahora.getMonth()]}).eq('id',id);
+  cargarAlumnos();
+}
+
+async function desmarcar(id) {
+  if(!confirm('¿Deshacer el pago?')) return;
+  await db.from('alumnos').update({pagado:false,fecha_pago:'',mes_pago:''}).eq('id',id);
+  cargarAlumnos();
+}
+
+// ── IMPORTAR CSV MATRÍCULAS ───────────────────────────────
+function importarCSV(input) {
+  var file=input.files[0]; if(!file) return;
+  var reader=new FileReader();
+  reader.onload=async function(e) {
+    var txt;
+    try { txt=new TextDecoder('windows-1252').decode(new Uint8Array(e.target.result)); }
+    catch(err){ txt=new TextDecoder('utf-8').decode(new Uint8Array(e.target.result)); }
+
+    var lineas=txt.split('\n').filter(function(l){ return l.trim()!==''; });
+    var nuevos=[], existentes={};
+    var { data: yaExisten } = await db.from('alumnos').select('nombre');
+    if (yaExisten) yaExisten.forEach(function(a){ existentes[norm(a.nombre)]=true; });
+
+    for (var i=1;i<lineas.length;i++) {
+      var cols=parsearCSV(lineas[i]);
+      if (cols.length<9) continue;
+      var apellidos=limpiar(cols[1]);
+      var nombre=limpiar(cols[2]);
+      if (!apellidos||!nombre) continue;
+      var nombreCompleto=apellidos+', '+nombre;
+      if (existentes[norm(nombreCompleto)]) continue;
+      nuevos.push({nombre:nombreCompleto,grupo:limpiar(cols[8]),ciclo:limpiar(cols[7]),pagado:false});
+      existentes[norm(nombreCompleto)]=true;
+    }
+
+    if (nuevos.length>0) {
+      for (var i=0;i<nuevos.length;i+=100) {
+        var {error}=await db.from('alumnos').insert(nuevos.slice(i,i+100));
+        if (error) { mostrarError(error.message); return; }
+      }
+    }
+    mostrarOk(nuevos.length+' alumnos nuevos añadidos.');
+    var sel=document.getElementById('seg-f-grupo');
+    while(sel.options.length>1) sel.remove(1);
+    cargarAlumnos();
+  };
+  reader.readAsArrayBuffer(file); input.value='';
+}
+
+// ── IMPORTAR FAMILIAS ─────────────────────────────────────
+function importarFamilias(input) {
+  var file=input.files[0]; if(!file) return;
+  var reader=new FileReader();
+  reader.onload=async function(e) {
+    try {
+      var wb=XLSX.read(new Uint8Array(e.target.result),{type:'array'});
+      var ws=wb.Sheets[wb.SheetNames[0]];
+      var rows=XLSX.utils.sheet_to_json(ws,{header:1,defval:''});
+
+      var cabeceraIdx=-1;
+      for(var i=0;i<rows.length;i++){
+        var r=rows[i].join(' ');
+        if(r.indexOf('Alumno')!==-1&&r.indexOf('tutor')!==-1){cabeceraIdx=i;break;}
+      }
+      if(cabeceraIdx===-1){mostrarError('No encuentro cabecera en el Excel de familias');return;}
+
+      var filas=[];
+      for(var i=cabeceraIdx+1;i<rows.length;i++){
+        var row=rows[i];
+        var celda0=(row[0]||'').toString().trim();
+        if(!celda0||isNaN(parseInt(celda0))) continue;
+        // Col 1: "Apellidos, Nombre YYYY/NNN - DNI"
+        var alumnoRaw=(row[1]||'').toString().trim();
+        var alumno=alumnoRaw.replace(/\s+\d{4}\/\d+\s*-\s*\S+\s*$/,'').trim();
+        if(!alumno) continue;
+        // Col 2: "Tutor1Apellidos, Tutor1Nombre  Tutor2Apellidos, Tutor2Nombre"
+        var tutoresRaw=(row[2]||'').toString().trim();
+        // Separar por doble espacio
+        var tutores=tutoresRaw.split(/\s{2,}/).map(function(t){return t.trim();}).filter(function(t){return t!=='';});
+        var tutor1=(tutores[0]||'').trim();
+        var tutor2=(tutores[1]||'').trim();
+        // Col 3: "GM-1CAR  1º de CFGM..."
+        var grupoRaw=(row[3]||'').toString().trim();
+        var grupo=grupoRaw.split(/\s+/)[0];
+        filas.push({alumno:alumno,grupo:grupo,tutor1:tutor1,tutor2:tutor2});
+      }
+
+      if(filas.length===0){mostrarError('No hay datos de familias');return;}
+      await db.from('familias').delete().neq('id',0);
+      for(var i=0;i<filas.length;i+=100){
+        var {error}=await db.from('familias').insert(filas.slice(i,i+100));
+        if(error){mostrarError(error.message);return;}
+      }
+      mostrarOk(filas.length+' familias cargadas.');
+    } catch(err){mostrarError('Error: '+err.message);}
+  };
+  reader.readAsArrayBuffer(file); input.value='';
+}
+
+// ── IMPORTAR BANCO ────────────────────────────────────────
+function abrirModalBanco(input) {
+  var file=input.files[0]; if(!file) return;
+  var reader=new FileReader();
+  reader.onload=function(e) {
+    try {
+      var wb=XLSX.read(new Uint8Array(e.target.result),{type:'array'});
+      var ws=wb.Sheets[wb.SheetNames[0]];
+      var rows=XLSX.utils.sheet_to_json(ws,{header:1,defval:''});
+      var dataIdx=-1;
+      for(var i=0;i<rows.length;i++){
+        var r=rows[i].join(' ').toLowerCase();
+        if(r.indexOf('concepto')!==-1||r.indexOf('ordenante')!==-1){dataIdx=i;break;}
+      }
+      if(dataIdx===-1){mostrarError('No encuentro columna de ordenante');return;}
+      var hdr=rows[dataIdx].map(function(c){return(c||'').toString().toLowerCase();});
+      var colOrd=-1,colFecha=-1;
+      hdr.forEach(function(h,idx){
+        if(colOrd===-1&&(h.indexOf('concepto')!==-1||h.indexOf('ordenante')!==-1)) colOrd=idx;
+        if(colFecha===-1&&h.indexOf('fecha')!==-1) colFecha=idx;
+      });
+      if(colOrd===-1){mostrarError('No encuentro columna de ordenante');return;}
+      _bancoPagos=[];
+      for(var i=dataIdx+1;i<rows.length;i++){
+        var row=rows[i];
+        var ord=(row[colOrd]||'').toString().trim();
+        if(!ord||ord.toLowerCase().indexOf('total')!==-1) continue;
+        // Limpiar texto extra del concepto
+        ord=ord.replace(/\d+\s*[A-Z]{2,}.*$/,'').replace(/[^\w\sáéíóúñÁÉÍÓÚÑ]/g,' ').replace(/\s+/g,' ').trim();
+        var fecha=colFecha!==-1?(row[colFecha]||'').toString().trim():'';
+        if(ord) _bancoPagos.push([ord,fecha]);
+      }
+      document.getElementById('banco-preview').textContent=_bancoPagos.length+' ordenantes encontrados.';
+      document.getElementById('banco-mes').value='';
+      new bootstrap.Modal(document.getElementById('modalBanco')).show();
+    } catch(err){mostrarError('Error: '+err.message);}
+  };
+  reader.readAsArrayBuffer(file); input.value='';
+}
+
+async function confirmarBanco() {
+  var mes=document.getElementById('banco-mes').value;
+  if(!mes){alert('Selecciona el mes');return;}
+  bootstrap.Modal.getInstance(document.getElementById('modalBanco')).hide();
+  document.getElementById('seg-lista').innerHTML=
+    '<div class="text-center py-4"><div class="spinner-border spinner-border-sm text-success"></div> Cruzando datos...</div>';
+
+  // Cargar alumnos y familias
+  var {data:alumnos}=await db.from('alumnos').select('*');
+  var {data:familias}=await db.from('familias').select('*');
+
+  var marcados=0,yaEstaban=0,noEncontrados=[];
+  var fecha=new Date().toLocaleDateString('es-ES');
+
+  for(var i=0;i<_bancoPagos.length;i++){
+    var ord=_bancoPagos[i][0];
+    var fPago=_bancoPagos[i][1]||fecha;
+    var palOrd=palabras(ord);
+    var alumnoEncontrado=null;
+
+    // PASO 1: Nombre exacto del alumno
+    if(alumnos){
+      for(var j=0;j<alumnos.length;j++){
+        if(norm(alumnos[j].nombre)===norm(ord)){alumnoEncontrado=alumnos[j];break;}
+      }
+    }
+
+    // PASO 2: Buscar apellido1 del alumno en palabras del ordenante
+    if(!alumnoEncontrado&&alumnos){
+      for(var j=0;j<alumnos.length;j++){
+        var apAlumno=norm(alumnos[j].nombre).split(' ')[0]; // primer apellido
+        if(apAlumno&&apAlumno.length>3&&palOrd.indexOf(apAlumno)!==-1){
+          // Verificar con segundo apellido si hay ambigüedad
+          var ap2=norm(alumnos[j].nombre).split(' ')[1];
+          if(ap2&&ap2.length>3){
+            if(palOrd.indexOf(ap2)!==-1){alumnoEncontrado=alumnos[j];break;}
+          } else {
+            alumnoEncontrado=alumnos[j];break;
+          }
+        }
+      }
+    }
+
+    // PASO 3: Buscar en texto completo de tutores
+    if(!alumnoEncontrado&&familias){
+      // Buscar si alguna palabra significativa del ordenante aparece en tutor1 o tutor2
+      for(var k=0;k<palOrd.length;k++){
+        if(palOrd[k].length<=3) continue;
+        for(var f=0;f<familias.length;f++){
+          var t1=norm(familias[f].tutor1||'');
+          var t2=norm(familias[f].tutor2||'');
+          var enT1=t1.indexOf(palOrd[k])!==-1;
+          var enT2=t2.indexOf(palOrd[k])!==-1;
+          if(enT1||enT2){
+            // Verificar con otra palabra del ordenante para reducir falsos positivos
+            var otraCoincidencia=false;
+            for(var m=0;m<palOrd.length;m++){
+              if(m===k||palOrd[m].length<=3) continue;
+              if(t1.indexOf(palOrd[m])!==-1||t2.indexOf(palOrd[m])!==-1){
+                otraCoincidencia=true;break;
+              }
+            }
+            if(otraCoincidencia){
+              // Encontrar el alumno en la lista
+              var nombreAlum=norm(familias[f].alumno);
+              for(var j=0;j<alumnos.length;j++){
+                if(norm(alumnos[j].nombre)===nombreAlum){alumnoEncontrado=alumnos[j];break;}
+              }
+              if(alumnoEncontrado) break;
+            }
+          }
+        }
+        if(alumnoEncontrado) break;
+      }
+    }
+
+    if(alumnoEncontrado){
+      if(alumnoEncontrado.pagado){
+        yaEstaban++;
+      } else {
+        await db.from('alumnos').update({pagado:true,fecha_pago:fPago,mes_pago:mes}).eq('id',alumnoEncontrado.id);
+        alumnoEncontrado.pagado=true;
+        marcados++;
+      }
+    } else {
+      noEncontrados.push(ord);
+    }
+  }
+
+  // Guardar incidencias
+  if(noEncontrados.length>0){
+    var {data:incExist}=await db.from('incidencias').select('mes,ordenante').eq('resuelto',false);
+    var existSet={};
+    if(incExist) incExist.forEach(function(i){existSet[i.mes+'|'+i.ordenante]=true;});
+    var nuevasInc=noEncontrados
+      .filter(function(o){return!existSet[mes+'|'+o];})
+      .map(function(o){return{mes:mes,ordenante:o,resuelto:false,revisado:false};});
+    if(nuevasInc.length>0) await db.from('incidencias').insert(nuevasInc);
+  }
+
+  var msg=marcados+' alumnos marcados como pagados en '+mes+'.';
+  if(yaEstaban>0) msg+=' ('+yaEstaban+' ya estaban pagados)';
+  if(noEncontrados.length>0) msg+=' '+noEncontrados.length+' no identificados → Incidencias.';
+  mostrarOk(msg);
+  var sel=document.getElementById('seg-f-grupo');
+  while(sel.options.length>1) sel.remove(1);
+  cargarAlumnos(); cargarIncidencias();
+}
+
+// ── INCIDENCIAS ───────────────────────────────────────────
+async function cargarIncidencias() {
+  document.getElementById('inc-lista').innerHTML=
+    '<div class="text-center py-3"><div class="spinner-border spinner-border-sm text-warning"></div></div>';
+  var {data,error}=await db.from('incidencias').select('*').order('mes').order('ordenante');
+  if(error){mostrarError(error.message);return;}
+  var total=data?data.length:0;
+  var resueltas=data?data.filter(function(i){return i.resuelto;}).length:0;
+  var porMes={};
+  if(data) data.forEach(function(i){if(!i.resuelto&&i.mes) porMes[i.mes]=(porMes[i.mes]||0)+1;});
+  document.getElementById('inc-total').textContent=total;
+  document.getElementById('inc-pendientes').textContent=total-resueltas;
+  document.getElementById('inc-resueltas').textContent=resueltas;
+  var pm='';
+  Object.keys(porMes).forEach(function(m){pm+='<span class="badge bg-secondary me-1">'+m+': '+porMes[m]+'</span>';});
+  document.getElementById('inc-por-mes').innerHTML=pm;
+  var lista=data?data.filter(function(i){return!i.resuelto;}):[];
+  renderIncidencias(lista);
+}
+
+function renderIncidencias(lista) {
+  var cont=document.getElementById('inc-lista');
+  if(!lista||lista.length===0){
+    cont.innerHTML='<div class="text-center text-muted py-4"><i class="bi bi-check-circle fs-1 text-success"></i><p>Sin incidencias</p></div>';
+    return;
+  }
+  var html='<div class="list-group list-group-flush">';
+  lista.forEach(function(inc){
+    var badge=inc.revisado
+      ?'<span class="badge-estado badge" style="background:#dbeafe;color:#1e40af;font-size:0.68rem;">👁 Revisado</span>'
+      :'<span class="badge-estado badge" style="background:#fef3c7;color:#92400e;font-size:0.68rem;">⏳ Sin revisar</span>';
+    var btnOjo=!inc.revisado
+      ?'<button class="btn btn-sm btn-outline-primary py-0 px-1 me-1" data-id="'+inc.id+'" onclick="marcarRevisado('+inc.id+')"><i class="bi bi-eye"></i></button>'
+      :'<button class="btn btn-sm btn-outline-secondary py-0 px-1 me-1" disabled><i class="bi bi-eye-fill"></i></button>';
+    html+=
+      '<div class="list-group-item" style="'+(inc.revisado?'background:#f0f9ff;':'')+'" data-inc-id="'+inc.id+'">'+
+        '<div class="d-flex justify-content-between align-items-center">'+
+          '<div>'+
+            '<div class="fw-semibold" style="font-size:0.8rem;">'+inc.ordenante+'</div>'+
+            '<div class="text-muted" style="font-size:0.68rem;">Mes: <strong>'+inc.mes+'</strong></div>'+
+            badge+
+          '</div>'+
+          '<div class="d-flex">'+btnOjo+
+            '<button class="btn btn-sm btn-outline-info py-0 px-1 me-1" onclick="buscarAlumnoParaIncidencia('+inc.id+',\''+inc.ordenante.replace(/'/g,"\\'")+'\',\''+inc.mes+'\')"><i class="bi bi-search"></i></button>'+
+            '<button class="btn btn-sm btn-outline-success py-0 px-1" onclick="resolverIncidencia('+inc.id+',\''+inc.ordenante.replace(/'/g,"\\'")+'\')"><i class="bi bi-check2"></i></button>'+
+          '</div>'+
+        '</div>'+
+        '<div id="busqueda-'+inc.id+'" style="display:none;" class="mt-2"></div>'+
+      '</div>';
+  });
+  html+='</div>';
+  cont.innerHTML=html;
+}
+
+async function buscarAlumnoParaIncidencia(incId, ordenante, mes) {
+  var div = document.getElementById('busqueda-'+incId);
+
+  // Toggle
+  if (div.style.display !== 'none') { div.style.display='none'; return; }
+
+  div.style.display='block';
+  div.innerHTML='<div class="spinner-border spinner-border-sm text-info"></div>';
+
+  // Extraer palabras del ordenante
+  var pals = palabras(ordenante);
+
+  // Buscar alumnos que coincidan con cualquier palabra significativa
+  var candidatos = {};
+  for (var k=0; k<pals.length; k++) {
+    if (pals[k].length <= 3) continue;
+    var {data} = await db.from('alumnos').select('id,nombre,grupo').ilike('nombre', '%'+pals[k]+'%').eq('pagado',false);
+    if (data) data.forEach(function(a){ candidatos[a.id]=a; });
+  }
+
+  var lista = Object.values(candidatos).sort(function(a,b){ return a.nombre.localeCompare(b.nombre); });
+
+  if (lista.length === 0) {
+    // Búsqueda manual por texto
+    div.innerHTML =
+      '<div class="input-group input-group-sm mt-1">'+
+        '<input type="text" class="form-control form-control-sm" id="manual-'+incId+'" placeholder="Escribe apellido del alumno...">'+
+        '<button class="btn btn-outline-info btn-sm" onclick="buscarManual('+incId+',\''+mes+'\')"><i class="bi bi-search"></i></button>'+
+      '</div>'+
+      '<div id="manual-res-'+incId+'"></div>';
+    return;
+  }
+
+  // Buscar tutores de cada candidato
+  var alumnoIds = lista.slice(0,8).map(function(a){ return a.id; });
+  var mapaFamilias = {};
+  var {data: fams} = await db.from('familias').select('alumno,tutor1,tutor2');
+  if (fams) fams.forEach(function(f){ mapaFamilias[norm(f.alumno)] = f; });
+
+  var html = '<div class="mt-1 mb-1" style="font-size:0.75rem;color:#6b7280;">Posibles alumnos — pulsa el correcto:</div>';
+  lista.slice(0,8).forEach(function(a){
+    var fam = mapaFamilias[norm(a.nombre)];
+    var tutores = '';
+    if (fam) {
+      if (fam.tutor1) tutores += '<span class="text-muted" style="font-size:0.68rem;">👤 '+fam.tutor1+'</span>';
+      if (fam.tutor2) tutores += '<br><span class="text-muted" style="font-size:0.68rem;">👤 '+fam.tutor2+'</span>';
+    }
+    html +=
+      '<div class="border rounded p-1 mb-1" style="font-size:0.75rem;">'+
+        '<div class="d-flex justify-content-between align-items-start">'+
+          '<div>'+
+            '<strong>'+a.nombre+'</strong> <span class="text-muted">('+a.grupo+')</span><br>'+
+            tutores+
+          '</div>'+
+          '<button class="btn btn-sm btn-success py-0 px-2 ms-2" onclick="asignarAlumno('+a.id+','+incId+',\''+mes+'\')">✓ Este</button>'+
+        '</div>'+
+      '</div>';
+  });
+
+  // Búsqueda manual adicional
+  html += '<div class="input-group input-group-sm mt-1">'+
+    '<input type="text" class="form-control form-control-sm" id="manual-'+incId+'" placeholder="Buscar otro alumno...">'+
+    '<button class="btn btn-outline-secondary btn-sm" onclick="buscarManual('+incId+',\''+mes+'\')"><i class="bi bi-search"></i></button>'+
+  '</div><div id="manual-res-'+incId+'"></div>';
+
+  div.innerHTML = html;
+}
+
+async function buscarManual(incId, mes) {
+  var texto = document.getElementById('manual-'+incId).value.trim();
+  if (!texto) return;
+  var {data} = await db.from('alumnos').select('id,nombre,grupo').ilike('nombre','%'+texto+'%').eq('pagado',false).limit(10);
+  var resDiv = document.getElementById('manual-res-'+incId);
+  if (!data||data.length===0) { resDiv.innerHTML='<div class="text-muted small">Sin resultados</div>'; return; }
+
+  // Cargar tutores
+  var {data:fams} = await db.from('familias').select('alumno,tutor1,tutor2');
+  var mapaFam = {};
+  if (fams) fams.forEach(function(f){ mapaFam[norm(f.alumno)]=f; });
+
+  var html='<div class="mt-1">';
+  data.forEach(function(a){
+    var fam=mapaFam[norm(a.nombre)];
+    var tutores='';
+    if(fam){
+      if(fam.tutor1) tutores+='<span class="text-muted" style="font-size:0.68rem;">👤 '+fam.tutor1+'</span>';
+      if(fam.tutor2) tutores+='<br><span class="text-muted" style="font-size:0.68rem;">👤 '+fam.tutor2+'</span>';
+    }
+    html+=
+      '<div class="border rounded p-1 mb-1" style="font-size:0.75rem;">'+
+        '<div class="d-flex justify-content-between align-items-start">'+
+          '<div><strong>'+a.nombre+'</strong> <span class="text-muted">('+a.grupo+')</span><br>'+tutores+'</div>'+
+          '<button class="btn btn-sm btn-success py-0 px-2 ms-2" onclick="asignarAlumno('+a.id+','+incId+',\''+mes+'\')">✓ Este</button>'+
+        '</div>'+
+      '</div>';
+  });
+  html+='</div>';
+  resDiv.innerHTML=html;
+}
+
+async function asignarAlumno(alumnoId, incId, mes) {
+  var fecha = new Date().toLocaleDateString('es-ES');
+  // Marcar alumno como pagado
+  await db.from('alumnos').update({pagado:true, fecha_pago:fecha, mes_pago:mes}).eq('id', alumnoId);
+  // Resolver incidencia
+  await db.from('incidencias').update({resuelto:true}).eq('id', incId);
+  // Quitar de la lista
+  var item = document.querySelector('[data-inc-id="'+incId+'"]');
+  if (item) item.remove();
+  // Actualizar contadores
+  var pend = parseInt(document.getElementById('inc-pendientes').textContent)-1;
+  var resu = parseInt(document.getElementById('inc-resueltas').textContent)+1;
+  document.getElementById('inc-pendientes').textContent = pend;
+  document.getElementById('inc-resueltas').textContent  = resu;
+  mostrarOk('Alumno asignado y marcado como pagado.');
+  // Refrescar contador navbar
+  cargarAlumnos();
+}
+  await db.from('incidencias').update({revisado:true}).eq('id',id);
+  var btn=document.querySelector('[data-id="'+id+'"]');
+  if(btn){
+    btn.disabled=true;btn.innerHTML='<i class="bi bi-eye-fill"></i>';
+    btn.className='btn btn-sm btn-outline-secondary py-0 px-1 me-1';
+    var item=btn.closest('.list-group-item');
+    if(item){item.style.background='#f0f9ff';var badge=item.querySelector('.badge-estado');
+      if(badge){badge.style.background='#dbeafe';badge.style.color='#1e40af';badge.textContent='👁 Revisado';}}
+  }
+}
+
+async function resolverIncidencia(id,nombre) {
+  if(!confirm('¿Marcar como resuelta la incidencia de '+nombre+'?')) return;
+  await db.from('incidencias').update({resuelto:true}).eq('id',id);
+  var item=document.querySelector('[data-inc-id="'+id+'"]');
+  if(item) item.remove();
+  var pend=parseInt(document.getElementById('inc-pendientes').textContent)-1;
+  var resu=parseInt(document.getElementById('inc-resueltas').textContent)+1;
+  document.getElementById('inc-pendientes').textContent=pend;
+  document.getElementById('inc-resueltas').textContent=resu;
+  mostrarOk('Incidencia resuelta');
+}
+
+async function limpiarRevisados() {
+  if(!confirm('¿Quitar todas las marcas de revisado?')) return;
+  await db.from('incidencias').update({revisado:false}).eq('resuelto',false);
+  mostrarOk('Marcas eliminadas'); cargarIncidencias();
+}
+
+// ── EXPORTAR EXCEL ────────────────────────────────────────
+async function exportarExcel() {
+  mostrarOk('Generando Excel...');
+  var {data:alumnos}=await db.from('alumnos').select('*').order('nombre');
+  if(!alumnos||alumnos.length===0){mostrarError('No hay datos');return;}
+  var wb=XLSX.utils.book_new();
+  var grupos={};
+  alumnos.forEach(function(a){ var g=a.grupo||'SIN GRUPO'; if(!grupos[g])grupos[g]=[]; grupos[g].push(a); });
+  Object.keys(grupos).sort().forEach(function(grupo){
+    var alums=grupos[grupo];
+    var pagados=alums.filter(function(a){return a.pagado;}).length;
+    var filas=[
+      ['IES GREGORIO PRIETO · SEGURO ESCOLAR'],
+      [grupo+' — '+(alums[0].ciclo||'')],
+      ['Pagados: '+pagados+' / '+alums.length+'   Pendientes: '+(alums.length-pagados)+'   Importe: '+(pagados*1.12).toFixed(2)+' €'],
+      [''],
+      ['Nº','Alumno/a','Estado','Mes pago','Fecha pago']
+    ];
+    alums.sort(function(a,b){return a.nombre.localeCompare(b.nombre);});
+    alums.forEach(function(a,idx){
+      filas.push([idx+1,a.nombre,a.pagado?'✓ Pagado':'⏳ Pendiente',a.mes_pago||'',a.fecha_pago||'']);
+    });
+    var ws=XLSX.utils.aoa_to_sheet(filas);
+    ws['!cols']=[{wch:5},{wch:35},{wch:14},{wch:12},{wch:12}];
+    XLSX.utils.book_append_sheet(wb,ws,grupo.substring(0,31));
+  });
+  var fecha=new Date().toLocaleDateString('es-ES').replace(/\//g,'-');
+  XLSX.writeFile(wb,'SeguroEscolar_'+fecha+'.xlsx');
+  mostrarOk('Excel descargado.');
+}
+
+// ── UTILIDADES ────────────────────────────────────────────
+function parsearCSV(linea) {
+  var res=[],campo='',enc=false;
+  for(var i=0;i<linea.length;i++){
+    var c=linea[i];
+    if(c==='"'){enc=!enc;}else if(c===','&&!enc){res.push(campo.trim());campo='';}else{campo+=c;}
+  }
+  res.push(campo.trim()); return res;
+}
+function limpiar(t){if(!t)return'';return t.replace(/"/g,'').replace(/\r/g,'').trim();}
+
+function mostrarOk(msg){
+  var el=document.getElementById('alerta-global');
+  el.className='alert alert-success alert-dismissible shadow';
+  document.getElementById('alerta-texto').textContent=msg;
+  el.style.display='block'; setTimeout(cerrarAlerta,5000);
+}
+function mostrarError(msg){
+  var el=document.getElementById('alerta-global');
+  el.className='alert alert-danger alert-dismissible shadow';
+  document.getElementById('alerta-texto').textContent='Error: '+msg;
+  el.style.display='block';
+}
+function cerrarAlerta(){document.getElementById('alerta-global').style.display='none';}
+
+</script>
+</body>
+</html>
